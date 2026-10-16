@@ -1,6 +1,12 @@
 const DOW=['日','月','火','水','木','金','土'];
 let periodKey='',currentDate='',loggedUser='',isAdmin=false;
 const $=id=>document.getElementById(id);
+// 【セキュリティ】HTMLに埋め込む文字列は必ずこの関数を通す（名前・備考・時刻など、他人が入力しうる値のXSS対策）
+function esc(s){
+  return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// 【セキュリティ】時刻は「HH:MM」形式のものだけ通す
+function safeTime(s){return (typeof s==='string'&&/^([01]?\d|2[0-3]):[0-5]\d$/.test(s))?s:'';}
 // スマホでパスワード欄などにキーボードが出ている状態だと、ボタンの1回目のタップが
 // 「キーボードを閉じるだけ」で終わってしまい、クリックが発生しないことがある。
 // touchendでも同じ処理を確実に実行することで、1回のタップで反応するようにする。
@@ -311,7 +317,8 @@ function renderShare(){
 function shareDetail(k){
   const d=data(),a=[],p=[],o=[];Object.entries(d).forEach(([n,v])=>{if(v.status?.[k]=='abs')a.push(n);if(v.status?.[k]=='pref')p.push(n);if(v.status?.[k]=='off')o.push(n)});
   const x=new Date(k+'T00:00:00');
-  shareDetailEl.innerHTML=`<h2>${fmt(x)}（${DOW[x.getDay()]}）</h2><b>🔴 絶対休み：${a.length}人</b><div class="people">${a.join(' ')||'なし'}</div><br><b>🟡 できれば休み：${p.length}人</b><div class="people">${p.join(' ')||'なし'}</div><br><b>🔵 有給休暇：${o.length}人</b><div class="people">${o.join(' ')||'なし'}</div>`;
+  const j=arr=>arr.map(esc).join(' ')||'なし';
+  shareDetailEl.innerHTML=`<h2>${fmt(x)}（${DOW[x.getDay()]}）</h2><b>🔴 絶対休み：${a.length}人</b><div class="people">${j(a)}</div><br><b>🟡 できれば休み：${p.length}人</b><div class="people">${j(p)}</div><br><b>🔵 有給休暇：${o.length}人</b><div class="people">${j(o)}</div>`;
 }
 const shareDetailEl=$('shareDetail');
 
@@ -322,11 +329,11 @@ function renderAdmin(){
     const rows=dates().map(x=>{
       const k=iso(x),s=p.status[k]||'none';
       const sl={none:'―',abs:'🔴 絶対休み',pref:'🟡 できれば休み',off:'🔵 有給休暇'}[s];
-      const t=p.time[k]||{},tm=(t.from||t.to)?(t.from||'指定なし')+'～'+(t.to||'指定なし'):'―';
+      const t=p.time[k]||{},tf=safeTime(t.from),tt=safeTime(t.to),tm=(tf||tt)?(tf||'指定なし')+'～'+(tt||'指定なし'):'―';
       return `<div class="admin-row"><span>${fmt(x)}(${DOW[x.getDay()]})</span><span>${sl}</span><span>${tm}</span></div>`;
     }).join('');
-    const noteHtml=p.note?`<p class="small"><b>備考：</b>${p.note.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</p>`:'';
-    return `<div class="staff-card"><div class="staff-head" onclick="toggleStaff('s${i}')">${n}　▾</div><div class="staff-body" id="s${i}">
+    const noteHtml=p.note?`<p class="small"><b>備考：</b>${esc(p.note).replace(/\n/g,'<br>')}</p>`:'';
+    return `<div class="staff-card"><div class="staff-head" onclick="toggleStaff('s${i}')">${esc(n)}　▾</div><div class="staff-body" id="s${i}">
       <div class="admin-row"><b>日付</b><b>休み希望</b><b>勤務可能時間</b></div>${rows}${noteHtml}</div></div>`;
   }).join('');
 }
@@ -354,14 +361,14 @@ function exportExcel(){
       if(s==='abs')return '定';
       if(s==='pref')return '休';
       if(s==='off')return '有';
-      if(t.from){timeCells.push([row,i+1]);return Number(t.from.replace(':',''));}
+      if(safeTime(t.from)){timeCells.push([row,i+1]);return Number(t.from.replace(':',''));}
       return '';
     })]); row++;
     aoa.push([n,...cols.map((x,i)=>{
       if(!x)return '';
       const k=iso(x),s=p.status[k]||'none',t=p.time[k]||{};
       if(s==='abs'||s==='pref'||s==='off')return '';
-      if(t.to){timeCells.push([row,i+1]);return Number(t.to.replace(':',''));}
+      if(safeTime(t.to)){timeCells.push([row,i+1]);return Number(t.to.replace(':',''));}
       return '';
     })]); row++;
     if(p.note){aoa.push([n+'（備考）',p.note]); row++;}
@@ -412,6 +419,7 @@ ocrFileInput.onchange=async()=>{
   const file=ocrFileInput.files[0];
   if(!file)return;
   ocrFileInput.value='';
+  if(!/^image\//.test(file.type)){alert('画像ファイルを選んでください。');return;}
   if(isDeadlinePassed(periodKey)){alert('入力締切を過ぎたため読み込めません。');return;}
   ocrBtn.disabled=true;ocrMsg.style.cssText='';ocrMsg.textContent='画像を処理中…';
   try{
@@ -459,18 +467,23 @@ function resizeAndEncodeImage(file){
 // この時点ではまだサーバーには保存しない（本人が確認して「保存」を押すまでは反映のみ）。
 function applyOcrResult(result){
   const d=data(),p=ensure(d,loggedUser);
+  // 【セキュリティ】読み取り結果は信用せず、現在の対象期間の日付・決まった形式の値だけを反映する
+  const valid=new Set(dates().map(iso));
   if(result&&result.statuses){
     Object.entries(result.statuses).forEach(([k,v])=>{
+      if(!valid.has(k))return;
       if(v==='abs'||v==='pref'||v==='off')p.status[k]=v;else delete p.status[k];
     });
   }
   if(result&&result.times){
     Object.entries(result.times).forEach(([k,v])=>{
-      if(v&&(v.from||v.to))p.time[k]={from:v.from||'',to:v.to||''};
+      if(!valid.has(k)||!v)return;
+      const from=safeTime(v.from),to=safeTime(v.to);
+      if(from||to)p.time[k]={from,to};
     });
   }
   if(result&&typeof result.note==='string'&&result.note.trim()){
-    p.note=result.note.trim();
+    p.note=result.note.trim().slice(0,500);
   }
   renderInput();
 }
@@ -490,7 +503,7 @@ function openChoice(){
   staffLoginBox.style.display='none';adminLoginBox.style.display='none';
 }
 function fillStaffNames(prefer){
-  staffNameLogin.innerHTML=names().map(n=>`<option>${n}</option>`).join('');
+  staffNameLogin.innerHTML=names().map(n=>`<option>${esc(n)}</option>`).join('');
   const lastName=localStorage.getItem('lastStaffName');
   if(prefer&&names().includes(prefer))staffNameLogin.value=prefer;
   else if(lastName&&names().includes(lastName))staffNameLogin.value=lastName;
@@ -505,7 +518,7 @@ function initialSetup(){
   const ns=setupNames.value.split(/\n|,/).map(x=>x.trim()).filter(Boolean),ap=setupAdminPw.value.trim();
   if(!ns.length||!ap){setupError.textContent='スタッフ名と管理者パスワードを入力してください。';return;}
   let fields='<h3>各スタッフのパスワード</h3><p class="notice">スタッフ本人に伝えるパスワードを設定してください。</p>';
-  ns.forEach((n,i)=>fields+=`<label>${n} のパスワード</label><input type="password" class="setupStaffPw" data-name="${encodeURIComponent(n)}" placeholder="パスワード">`);
+  ns.forEach((n,i)=>fields+=`<label>${esc(n)} のパスワード</label><input type="password" class="setupStaffPw" data-name="${encodeURIComponent(n)}" placeholder="パスワード">`);
   setupPasswordArea.innerHTML=fields;
   setupPasswordArea.dataset.names=JSON.stringify(ns);
   setupNext.style.display='none';
@@ -585,7 +598,7 @@ staffManageBtn.onclick=()=>{
 function renderDeadlineList(){
   deadlineList.innerHTML=[...period.options].map(o=>{
     const key=o.value,label=o.textContent,val=deadlineFor(key);
-    return `<div class="row" style="justify-content:space-between;margin:8px 0"><span class="small">${label}</span><input type="date" data-period="${key}" value="${val}"></div>`;
+    return `<div class="row" style="justify-content:space-between;margin:8px 0"><span class="small">${label}</span><input type="date" data-period="${esc(key)}" value="${esc(val)}"></div>`;
   }).join('');
 }
 deadlineBtn.onclick=()=>{
@@ -620,6 +633,7 @@ manageSave.onclick=async()=>{
   manageMsg.textContent='保存中…';
   try{
     const r=await api('setStaff',{staff,adminPassword:newAdminPw.value.trim()});
+    if(r.token)authToken=r.token; // パスワード変更などでログイン券が更新されたときは、新しい券に差し替える
     cachedNames=r.names;writeCfgCache();
     manageStaff.value=names().map(n=>`${n}｜`).join('\n');newAdminPw.value='';
     manageMsg.textContent='保存しました';renderAdmin();setTimeout(()=>manageMsg.textContent='',1500);
