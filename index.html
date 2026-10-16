@@ -22,7 +22,8 @@
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#222222">
 
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- SheetJS 0.18.5 は外部CDNに頼らず、同じフォルダに置いたファイルを読み込む（CDN改ざん対策） -->
+<script src="xlsx.full.min.js"></script>
 <!-- デザインは style.css に分離。更新したら ?v= の数字を上げるとキャッシュが更新されます -->
 <link rel="stylesheet" href="style.css?v=1">
 </head>
@@ -187,6 +188,6 @@
 </div></div>
 
 <!-- JavaScript本体は app.js に分離。更新したら ?v= の数字を上げるとキャッシュが更新されます -->
-<script src="app.js?v=1"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>
